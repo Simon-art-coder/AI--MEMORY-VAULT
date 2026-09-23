@@ -1,11 +1,23 @@
 """
-Transactional email sending, via Gmail SMTP.
+Transactional email sending, via Brevo's HTTPS API.
+
+Previously used raw SMTP (Gmail), which worked locally but failed on
+Render with "[Errno 101] Network is unreachable" -- confirmed via
+Render's own changelog: free web services block ALL outbound traffic on
+SMTP ports 25, 465, and 587 as of September 2025, specifically to fight
+spam abuse. This is a permanent platform policy -- SMTP simply cannot
+work from a free Render service, regardless of provider.
+
+The fix: send email over HTTPS instead. Brevo's transactional email
+REST API does the same job over port 443, which is never blocked.
+Free tier: 300 emails/day, no credit card required.
 """
 
-import smtplib
-from email.mime.text import MIMEText
+import httpx
 
 from app.core.config import get_settings
+
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
 
 class EmailNotConfiguredError(Exception):
@@ -16,26 +28,34 @@ class EmailSendError(Exception):
     pass
 
 
-def _send(to_email: str, subject: str, body: str) -> None:
+def _send(to_email: str, subject: str, text_content: str) -> None:
     settings = get_settings()
 
-    if not settings.smtp_username or not settings.smtp_password:
+    if not settings.brevo_api_key or not settings.brevo_sender_email:
         raise EmailNotConfiguredError(
-            "No SMTP credentials configured (SMTP_USERNAME / SMTP_PASSWORD in .env)."
+            "No Brevo credentials configured (BREVO_API_KEY / BREVO_SENDER_EMAIL in .env)."
         )
 
-    from_email = settings.smtp_from_email or settings.smtp_username
-    message = MIMEText(body)
-    message["Subject"] = subject
-    message["From"] = from_email
-    message["To"] = to_email
+    payload = {
+        "sender": {"name": settings.brevo_sender_name, "email": settings.brevo_sender_email},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "textContent": text_content,
+    }
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
-            server.starttls()
-            server.login(settings.smtp_username, settings.smtp_password)
-            server.sendmail(from_email, [to_email], message.as_string())
-    except (smtplib.SMTPException, OSError) as exc:
+        response = httpx.post(
+            BREVO_API_URL,
+            headers={
+                "accept": "application/json",
+                "api-key": settings.brevo_api_key,
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
         raise EmailSendError(f"Failed to send email: {exc}") from exc
 
 

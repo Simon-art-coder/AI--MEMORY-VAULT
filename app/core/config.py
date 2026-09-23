@@ -1,10 +1,5 @@
 """
 Central configuration for the application.
-
-We use pydantic-settings instead of raw os.environ calls so that every
-config value is typed, validated, and documented in one place. If a
-required value is missing or malformed, the app fails immediately on
-startup rather than failing halfway through a request three days from now.
 """
 
 from functools import lru_cache
@@ -15,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # --- Application ---
     app_name: str = "AI Memory Vault"
-    environment: str = "development"  # development | staging | production
+    environment: str = "development"
     debug: bool = True
 
     # --- Security ---
@@ -30,9 +25,6 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # --- AI providers ---
-    # Chat/extraction run on Groq (see app/ai/llm_client.py for why).
-    # Embeddings run on Gemini, with an OpenAI fallback, then a local
-    # lexical fallback if neither key is set.
     groq_api_key: str | None = None
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
@@ -46,12 +38,10 @@ class Settings(BaseSettings):
     # --- Search ---
     max_search_results: int = 8
 
-    # --- Email (password reset) ---
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_username: str | None = None
-    smtp_password: str | None = None
-    smtp_from_email: str | None = None
+    # --- Email (password reset, email verification) ---
+    brevo_api_key: str | None = None
+    brevo_sender_email: str | None = None
+    brevo_sender_name: str = "AI Memory Vault"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -62,10 +52,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """
-    Returns a cached Settings instance.
-
-    lru_cache means the .env file is only read and validated once per
-    process, not on every request that needs a config value.
-    """
     return Settings()
