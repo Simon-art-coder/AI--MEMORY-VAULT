@@ -23,6 +23,7 @@ from app.ai.embeddings import embed_text
 from app.ai.llm_client import LLMNotConfiguredError, LLMRequestError, generate
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.email import EmailNotConfiguredError, EmailSendError, send_password_reset_email
 from app.ingestion.extractors import ExtractionFailedError, UnsupportedFileTypeError
 from app.ingestion.whatsapp_parser import WhatsAppParseError
 from app.models.user import User
@@ -33,7 +34,11 @@ from app.repositories.memory_repository import (
 )
 from app.search.search_service import search_memories
 from app.services import auth_service
-from app.services.auth_service import EmailAlreadyRegisteredError, InvalidCredentialsError
+from app.services.auth_service import (
+    EmailAlreadyRegisteredError,
+    InvalidCredentialsError,
+    InvalidOrExpiredResetTokenError,
+)
 from app.services.capture_service import capture_note
 from app.services.events_service import get_events_and_decisions
 from app.services.extraction_service import ExtractionSkippedNotConfigured, run_extraction_for_memory
@@ -106,8 +111,19 @@ def register_page(request: Request):
 
 @router.post("/register", response_class=HTMLResponse)
 def register_submit(
-    request: Request, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(get_db),
 ):
+    if password != confirm_password:
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {"user": None, "error": "Passwords do not match."},
+        )
+
     try:
         auth_service.register_user(db, email=email, password=password)
     except EmailAlreadyRegisteredError:
@@ -152,6 +168,72 @@ def logout():
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(COOKIE_NAME)
     return response
+
+
+# --- Password reset ---
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_page(request: Request):
+    return templates.TemplateResponse(
+        request, "forgot_password.html", {"user": None, "message": None, "error": None}
+    )
+
+
+@router.post("/forgot-password", response_class=HTMLResponse)
+def forgot_password_submit(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
+    # Same message regardless of whether the email is registered -- this
+    # is deliberate, not an oversight: it stops the endpoint from being
+    # usable to check which email addresses have an account here.
+    generic_message = "If that email is registered, a password reset link has been sent."
+
+    token = auth_service.create_reset_token_for_email(db, email)
+    if token is not None:
+        reset_link = f"{str(request.base_url).rstrip('/')}/reset-password?token={token}"
+        try:
+            send_password_reset_email(email, reset_link)
+        except (EmailNotConfiguredError, EmailSendError):
+            # Deliberately still show the generic success message to the
+            # user (no enumeration leak) -- but this failure is real and
+            # worth checking server logs / the Status page for.
+            pass
+
+    return templates.TemplateResponse(
+        request, "forgot_password.html", {"user": None, "message": generic_message, "error": None}
+    )
+
+
+@router.get("/reset-password", response_class=HTMLResponse)
+def reset_password_page(request: Request, token: str):
+    return templates.TemplateResponse(
+        request, "reset_password.html", {"user": None, "token": token, "error": None}
+    )
+
+
+@router.post("/reset-password", response_class=HTMLResponse)
+def reset_password_submit(
+    request: Request,
+    token: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    if new_password != confirm_password:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"user": None, "token": token, "error": "Passwords do not match."},
+        )
+
+    try:
+        auth_service.reset_password_with_token(db, token=token, new_password=new_password)
+    except InvalidOrExpiredResetTokenError as exc:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"user": None, "token": token, "error": str(exc)},
+        )
+
+    return RedirectResponse("/login", status_code=303)
 
 
 # --- App pages (require login) ---

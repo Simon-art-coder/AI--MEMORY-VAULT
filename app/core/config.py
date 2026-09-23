@@ -21,26 +21,23 @@ class Settings(BaseSettings):
     # --- Security ---
     secret_key: str
     access_token_expire_minutes: int = 30
-
-    # --- Database ---
-    # SQLite by default for local dev (zero setup). Swap for a PostgreSQL URL
-    # in production — SQLAlchemy models don't change, only this string.
-    database_url: str = "sqlite:///./memory_vault.db"
-
-    # --- JWT ---
     jwt_algorithm: str = "HS256"
 
-    # --- Redis / background jobs ---
+    # --- Database ---
+    database_url: str = "sqlite:///./memory_vault.db"
+
+    # --- Redis / background jobs (not used yet — ingestion runs synchronously) ---
     redis_url: str = "redis://localhost:6379/0"
-    
-        # --- AI providers ---
-    # Chat/extraction run on Groq (see llm_client.py for why). Embeddings
-    # stay on Gemini/OpenAI.
+
+    # --- AI providers ---
+    # Chat/extraction run on Groq (see app/ai/llm_client.py for why).
+    # Embeddings run on Gemini, with an OpenAI fallback, then a local
+    # lexical fallback if neither key is set.
     groq_api_key: str | None = None
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
-    llm_model: str = "llama-3.3-70b-versatile"
-    
+    llm_model: str = "openai/gpt-oss-120b"
+
     # --- Ingestion / chunking ---
     chunk_size_chars: int = 1200
     chunk_overlap_chars: int = 150
@@ -48,6 +45,13 @@ class Settings(BaseSettings):
 
     # --- Search ---
     max_search_results: int = 8
+
+    # --- Email (password reset) ---
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,22 +1,36 @@
-{% extends "base.html" %} {% block title %}Status — AI Memory Vault{% endblock
-%} {% block content %}
+{% extends "base.html" %} {% from "_icons.html" import icon %} {% block title
+%}Status — AI Memory Vault{% endblock %} {% block content %}
 <h2>System status</h2>
+<p class="page-subtitle">
+  Live connectivity checks for the database and AI providers.
+</p>
 
 <div class="card">
-  <h3>Database</h3>
+  <div class="card-header">
+    <div class="card-icon neutral">{{ icon('activity', 18) }}</div>
+    <div class="card-header-text"><h3>Database</h3></div>
+  </div>
   {% if db_ok %}
-  <p>✅ Connected</p>
+  <p style="display: flex; align-items: center; gap: 7px; color: var(--green)">
+    {{ icon('check-circle', 16) }} Connected
+  </p>
   {% else %}
-  <p class="error">❌ Not reachable — {{ db_error }}</p>
+  <p class="error">{{ icon('x-circle', 16) }} Not reachable — {{ db_error }}</p>
   {% endif %}
 </div>
 
 <div class="card">
-  <h3>Groq — chat answers &amp; extraction</h3>
+  <div class="card-header">
+    <div class="card-icon neutral">{{ icon('activity', 18) }}</div>
+    <div class="card-header-text">
+      <h3>Groq — chat answers &amp; extraction</h3>
+    </div>
+  </div>
   {% if not groq_configured %}
-  <p class="warning">
-    No GROQ_API_KEY set in .env — chat and extraction are disabled.
-  </p>
+  <div class="warning">
+    {{ icon('alert-triangle', 16) }}
+    <span>No GROQ_API_KEY set in .env — chat and extraction are disabled.</span>
+  </div>
   {% else %}
   <p class="muted">
     Key is set (model: {{ llm_model }}). This only confirms a key is configured,
@@ -33,7 +47,10 @@
 </div>
 
 <div class="card">
-  <h3>Embeddings — semantic search</h3>
+  <div class="card-header">
+    <div class="card-icon neutral">{{ icon('activity', 18) }}</div>
+    <div class="card-header-text"><h3>Embeddings — semantic search</h3></div>
+  </div>
   <p class="muted">Provider: {{ embedding_provider }}</p>
   {% if embedding_provider != 'local fallback (no key set)' %}
   <form method="post" action="/status/test-embeddings">
@@ -49,9 +66,12 @@
   {% endif %} {% endif %}
 </div>
 
-<p class="muted">
-  These "test now" buttons make one real, small API call on demand — they don't
-  run automatically on page load, so loading this page never burns API quota by
-  itself.
-</p>
+<div class="hint">
+  {{ icon('info', 13) }}
+  <span
+    >These "test now" buttons make one real, small API call on demand — they
+    don't run automatically on page load, so loading this page never burns API
+    quota by itself.</span
+  >
+</div>
 {% endblock %}

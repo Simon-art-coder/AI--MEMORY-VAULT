@@ -1,168 +1,612 @@
-{% extends "base.html" %} {% block title %}Dashboard — AI Memory Vault{%
-endblock %} {% block content %}
-<h2>Dashboard</h2>
+{% extends "base.html" %} {% from "_icons.html" import icon %} {% block title
+%}Dashboard — AI Memory Vault{% endblock %} {% block content %}
 
-{% if not ai_configured %}
-<div class="warning" style="margin-bottom: 18px">
-  No GROQ_API_KEY set — chat answers and fact extraction are disabled. Search
-  and upload still work.
-  <a href="/status" style="color: inherit">Check status</a>.
-</div>
-{% endif %}
+<style>
+  /* Dashboard-specific layout */
+  .dashboard-page {
+    width: 100%;
+    max-width: 1120px;
+  }
 
-<div class="card">
-  <h3>Upload a document</h3>
-  {% if upload_error %}
-  <p class="error">{{ upload_error }}</p>
-  {% endif %}
-  <form method="post" action="/dashboard/upload" enctype="multipart/form-data">
-    <input type="file" name="file" accept=".txt,.md,.pdf,.docx" required />
-    <button type="submit">Upload</button>
-  </form>
-  <p class="muted">
-    Supported: .txt, .md, .pdf, .docx — or use
-    <a href="/chat" style="color: var(--accent)">Chat</a> to type a note
-    instead.
-  </p>
-</div>
+  .dashboard-intro {
+    margin-bottom: 28px;
+  }
 
-<div class="card">
-  <h3>Import a WhatsApp chat</h3>
-  {% if whatsapp_error %}
-  <p class="error">{{ whatsapp_error }}</p>
-  {% endif %}
-  <form
-    method="post"
-    action="/dashboard/upload-whatsapp"
-    enctype="multipart/form-data"
-  >
-    <input type="file" name="file" accept=".txt" required />
-    <button type="submit">Import chat</button>
-  </form>
-  <p class="muted">
-    In WhatsApp: open the chat &rarr; ⋮ menu &rarr; More &rarr; Export chat
-    &rarr; Without Media. Upload the .txt file it creates.
-  </p>
-</div>
+  .dashboard-intro h2 {
+    margin-bottom: 8px;
+  }
 
-<div class="card">
-  <h3>Search your memories</h3>
-  <form method="get" action="/dashboard">
-    <input
-      type="text"
-      name="q"
-      placeholder="Search..."
-      value="{{ query or '' }}"
-    />
-    <button type="submit">Search</button>
-  </form>
-  {% if search_results is not none %}
-  <p class="muted">{{ search_results|length }} result(s) for "{{ query }}"</p>
-  {% for r in search_results %}
-  <div class="excerpt">
-    <strong>{{ r.source_filename }}</strong>
-    <span class="badge"
-      >{{ "%.0f"|format(r.relevance_score * 100) }}% match</span
-    ><br />
-    {{ r.excerpt }}
+  .dashboard-intro .page-subtitle {
+    max-width: 680px;
+    line-height: 1.7;
+    margin-bottom: 0;
+  }
+
+  /* Make the main dashboard sections more balanced */
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+    gap: 18px;
+    align-items: start;
+  }
+
+  .dashboard-grid > .card {
+    margin-bottom: 0;
+  }
+
+  .dashboard-wide {
+    grid-column: 1 / -1;
+  }
+
+  /* Upload area */
+  .memory-upload-card {
+    min-height: 0;
+  }
+
+  .memory-upload-card .file-drop {
+    min-height: 190px;
+  }
+
+  .memory-upload-card .file-drop-text {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .memory-upload-card .file-drop-or {
+    margin: 5px 0;
+  }
+
+  .memory-upload-card .file-drop button {
+    margin-top: 3px;
+  }
+
+  .upload-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  /* Compact secondary cards */
+  .compact-card .card-header {
+    margin-bottom: 14px;
+  }
+
+  .compact-card .hint {
+    line-height: 1.5;
+  }
+
+  /* Search */
+  .memory-search-card {
+    margin-top: 0;
+  }
+
+  .memory-search-card .search-row input {
+    min-height: 42px;
+  }
+
+  .memory-search-card .search-row button {
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  /* Memory list */
+  .memory-list-card {
+    margin-top: 0;
+  }
+
+  .memory-source {
+    padding: 15px;
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    margin-bottom: 10px;
+  }
+
+  .memory-source:last-child {
+    margin-bottom: 0;
+  }
+
+  .memory-source-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .memory-source-info {
+    min-width: 0;
+  }
+
+  .memory-source-name {
+    font-weight: 650;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  .memory-source-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 4px;
+  }
+
+  .memory-source-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .memory-source-actions form {
+    margin: 0;
+  }
+
+  .memory-source-actions button {
+    white-space: nowrap;
+  }
+
+  .memory-chunk {
+    margin: 10px 0 0;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  /* Search result */
+  .search-result {
+    padding: 13px 15px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    margin-top: 9px;
+  }
+
+  .search-result:first-of-type {
+    margin-top: 10px;
+  }
+
+  .search-result-source {
+    font-weight: 650;
+    color: var(--text);
+  }
+
+  /* Empty state */
+  .dashboard-empty {
+    padding: 34px 20px;
+    text-align: center;
+  }
+
+  .dashboard-empty-icon {
+    width: 44px;
+    height: 44px;
+    margin: 0 auto 12px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    border: 1px solid var(--border-soft);
+    color: var(--text-muted);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .dashboard-empty p {
+    max-width: 430px;
+    margin: 0 auto;
+    color: var(--text-muted);
+    font-size: 13.5px;
+  }
+
+  /* AI warning */
+  .dashboard-warning {
+    margin-bottom: 20px;
+  }
+
+  /* Better responsive behaviour */
+  @media (max-width: 900px) {
+    .dashboard-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .dashboard-wide {
+      grid-column: auto;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .dashboard-page {
+      max-width: 100%;
+    }
+
+    .dashboard-intro {
+      margin-bottom: 20px;
+    }
+
+    .dashboard-intro .page-subtitle {
+      font-size: 13.5px;
+    }
+
+    .dashboard-grid {
+      gap: 14px;
+    }
+
+    .memory-source-top {
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .memory-source-actions {
+      width: 100%;
+    }
+
+    .memory-source-actions form {
+      flex: 1;
+    }
+
+    .memory-source-actions button {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .upload-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .upload-actions button {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+</style>
+
+<div class="dashboard-page">
+  <!-- DASHBOARD INTRO -->
+  <div class="dashboard-intro">
+    <h2>Dashboard</h2>
+
+    <p class="page-subtitle">
+      <strong>Everything worth remembering, in one place.</strong>
+      Keep your conversations, documents, decisions, and important moments
+      organized and easily accessible.
+    </p>
   </div>
-  {% endfor %} {% endif %}
-</div>
 
-<div class="card">
-  <h3>
-    Your memories ({{ memory_groups|length }} source{{ 's' if
-    memory_groups|length != 1 else '' }})
-  </h3>
-  {% if not memory_groups %}
-  <p class="muted">
-    Nothing yet — upload a document, import a WhatsApp chat, or add a note in
-    Chat.
-  </p>
-  {% endif %} {% for group in memory_groups %}
-  <div class="excerpt">
-    <div
-      style="
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 10px;
-      "
-    >
-      <div>
-        <strong>{{ group.filename }}</strong>
-        <span class="badge"
-          >{{ group.chunks|length }} chunk{{ 's' if group.chunks|length != 1
-          else '' }}</span
-        >
-        {% if group.has_facts %}<span class="badge" style="color: var(--accent)"
-          >facts extracted</span
-        >{% endif %}
-        <br />
-        <span class="muted"
-          >{{ group.created_at.strftime('%Y-%m-%d %H:%M') }}</span
-        >
+  <!-- AI CONFIGURATION WARNING -->
+  {% if not ai_configured %}
+  <div class="warning dashboard-warning">
+    {{ icon('alert-triangle', 16) }}
+
+    <div>
+      <strong>AI features are not configured.</strong>
+      Chat answers and fact extraction are currently disabled. Search and
+      uploads will still work.
+
+      <a href="/status" style="color: inherit; text-decoration: underline">
+        Check status </a
+      >.
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="dashboard-grid">
+    <!-- ADD TO MEMORY -->
+    <div class="card memory-upload-card">
+      <div class="card-header">
+        <div class="card-icon">{{ icon('file-text', 18) }}</div>
+
+        <div class="card-header-text">
+          <h3>Add to your memory</h3>
+
+          <p>
+            Save documents, notes, and files you may want to remember later.
+          </p>
+        </div>
       </div>
-      <div style="display: flex; gap: 6px; flex-shrink: 0">
-        {% if ai_configured and not group.has_facts %}
-        <form
-          method="post"
-          action="/dashboard/extract-source/{{ group.source_id }}"
-        >
-          <button
-            type="submit"
-            style="
-              background: var(--surface-2);
-              color: var(--accent);
-              border: 1px solid var(--border);
-              padding: 6px 12px;
-              font-size: 12px;
+
+      {% if upload_error %}
+      <p class="error">{{ icon('x-circle', 14) }} {{ upload_error }}</p>
+      {% endif %}
+
+      <form
+        method="post"
+        action="/dashboard/upload"
+        enctype="multipart/form-data"
+      >
+        <label class="file-drop">
+          <input
+            class="visually-hidden-input"
+            type="file"
+            name="file"
+            accept=".txt,.md,.pdf,.docx"
+            required
+            onchange="
+              this.closest('form').querySelector(
+                '.file-drop-text',
+              ).textContent = this.files[0]
+                ? this.files[0].name
+                : 'Drag and drop your file here'
             "
-          >
-            Extract facts
+          />
+
+          <div class="file-drop-icon">{{ icon('upload-cloud', 30) }}</div>
+
+          <p class="file-drop-text">Drag and drop your file here</p>
+
+          <p class="file-drop-or">or</p>
+
+          <button type="button">{{ icon('folder', 15) }} Choose File</button>
+        </label>
+
+        <div class="upload-actions">
+          <button type="submit">
+            {{ icon('upload-cloud', 15) }} Save to Memory
           </button>
-        </form>
-        {% endif %}
-        <form
-          method="post"
-          action="/dashboard/delete-source/{{ group.source_id }}"
-          onsubmit="
-            return confirm(
-              'Delete this source and all its memories? This cannot be undone.',
-            );
-          "
-        >
-          <button
-            type="submit"
-            style="
-              background: var(--surface-2);
-              color: var(--error);
-              border: 1px solid var(--border);
-              padding: 6px 12px;
-              font-size: 12px;
-            "
-          >
-            Delete
-          </button>
-        </form>
+        </div>
+      </form>
+
+      <div class="hint">
+        {{ icon('info', 13) }}
+
+        <span>
+          Supports .txt, .md, .pdf and .docx. You can also
+          <a href="/chat">write a note in Chat</a>.
+        </span>
       </div>
     </div>
-    {% for chunk in group.chunks[:2] %}
-    <p style="margin: 8px 0 0; font-size: 13px">
-      {{ chunk[:180] }}{% if chunk|length > 180 %}...{% endif %}
-    </p>
-    {% endfor %} {% if group.chunks|length > 2 %}
-    <p class="muted" style="margin-top: 6px">
-      +{{ group.chunks|length - 2 }} more chunk(s)
-    </p>
-    {% endif %}
+
+    <!-- WHATSAPP IMPORT -->
+    <div class="card compact-card">
+      <div class="card-header">
+        <div class="card-icon whatsapp-icon" aria-label="WhatsApp">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              d="M20.52 3.48A11.86 11.86 0 0 0 12.07 0C5.5 0 .15 5.35.15 11.92c0 2.1.55 4.15 1.6 5.96L.05 24l6.26-1.64a11.9 11.9 0 0 0 5.75 1.47h.01c6.57 0 11.92-5.35 11.92-11.92 0-3.19-1.24-6.18-3.47-8.43ZM12.07 21.8h-.01a9.88 9.88 0 0 1-5.03-1.38l-.36-.21-3.72.98.99-3.63-.23-.37a9.86 9.86 0 0 1-1.51-5.27C2.2 6.47 6.63 2.04 12.08 2.04c2.64 0 5.12 1.03 6.98 2.89a9.82 9.82 0 0 1 2.88 6.99c0 5.45-4.43 9.88-9.87 9.88Zm5.42-7.4c-.3-.15-1.77-.87-2.04-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.65.07-.3-.15-1.25-.46-2.38-1.47-.88-.79-1.47-1.77-1.64-2.07-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.49s1.07 2.89 1.22 3.09c.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.69.63.71.23 1.35.2 1.86.12.57-.09 1.77-.72 2.02-1.42.25-.7.25-1.3.17-1.42-.07-.12-.27-.2-.57-.35Z"
+              fill="currentColor"
+            />
+          </svg>
+        </div>
+
+        <div class="card-header-text">
+          <h3>Bring in a conversation</h3>
+
+          <p>
+            Keep an important WhatsApp conversation searchable in your vault.
+          </p>
+        </div>
+      </div>
+
+      {% if whatsapp_error %}
+      <p class="error">{{ icon('x-circle', 14) }} {{ whatsapp_error }}</p>
+      {% endif %}
+
+      <form
+        method="post"
+        action="/dashboard/upload-whatsapp"
+        enctype="multipart/form-data"
+      >
+        <label class="file-row">
+          <input
+            class="visually-hidden-input"
+            type="file"
+            name="file"
+            accept=".txt"
+            required
+            onchange="
+              this.closest('form').querySelector('.file-row-name').textContent =
+                this.files[0] ? this.files[0].name : 'No file chosen'
+            "
+          />
+
+          <button type="button">{{ icon('folder', 14) }} Choose File</button>
+
+          <span class="file-row-name"> No file chosen </span>
+        </label>
+
+        <div class="upload-actions">
+          <button type="submit">
+            {{ icon('message-circle', 15) }} Import Conversation
+          </button>
+        </div>
+      </form>
+
+      <div class="hint">
+        {{ icon('info', 13) }}
+
+        <span>
+          In WhatsApp, open the chat → ⋮ menu → More → Export chat → Without
+          Media.
+        </span>
+      </div>
+    </div>
+
+    <!-- SEARCH -->
+    <div class="card memory-search-card dashboard-wide">
+      <div class="card-header">
+        <div class="card-icon neutral">{{ icon('search', 18) }}</div>
+
+        <div class="card-header-text">
+          <h3>Search your memories</h3>
+
+          <p>Find a conversation, document, decision, or important moment.</p>
+        </div>
+      </div>
+
+      <form method="get" action="/dashboard" class="search-row">
+        <input
+          type="text"
+          name="q"
+          placeholder="What are you trying to remember?"
+          value="{{ query or '' }}"
+        />
+
+        <button type="submit">
+          {{ icon('search', 15) }}
+          <span>Search</span>
+        </button>
+      </form>
+
+      {% if search_results is not none %}
+
+      <p class="muted" style="margin-top: 12px">
+        {{ search_results|length }} result{{ 's' if search_results|length != 1
+        else '' }} for "{{ query }}"
+      </p>
+
+      {% for r in search_results %}
+
+      <div class="search-result">
+        <span class="search-result-source"> {{ r.source_filename }} </span>
+
+        <span class="badge">
+          {{ "%.0f"|format(r.relevance_score * 100) }}% match
+        </span>
+
+        <div style="margin-top: 6px">{{ r.excerpt }}</div>
+      </div>
+
+      {% endfor %} {% endif %}
+    </div>
+
+    <!-- YOUR MEMORIES -->
+    <div class="card memory-list-card dashboard-wide">
+      <div class="card-header">
+        <div class="card-icon neutral">{{ icon('file-text', 18) }}</div>
+
+        <div class="card-header-text">
+          <h3>Your memories</h3>
+
+          <p>
+            {{ memory_groups|length }} source{{ 's' if memory_groups|length != 1
+            else '' }} stored in your vault.
+          </p>
+        </div>
+      </div>
+
+      {% if not memory_groups %}
+
+      <div class="dashboard-empty">
+        <div class="dashboard-empty-icon">{{ icon('file-text', 22) }}</div>
+
+        <p>
+          Your vault is empty for now. Upload a document, import a WhatsApp
+          conversation, or add a note through Chat.
+        </p>
+      </div>
+
+      {% endif %} {% for group in memory_groups %}
+
+      <div class="memory-source">
+        <div class="memory-source-top">
+          <div class="memory-source-info">
+            <div class="memory-source-name">{{ group.filename }}</div>
+
+            <div class="memory-source-meta">
+              <span class="badge">
+                {{ group.chunks|length }} chunk{{ 's' if group.chunks|length !=
+                1 else '' }}
+              </span>
+
+              {% if group.has_facts %}
+
+              <span
+                class="badge"
+                style="color: var(--accent); border-color: var(--accent-border)"
+              >
+                facts extracted
+              </span>
+
+              {% endif %}
+            </div>
+
+            <div class="muted" style="margin-top: 5px">
+              {{ group.created_at.strftime('%Y-%m-%d %H:%M') }}
+            </div>
+          </div>
+
+          <div class="memory-source-actions">
+            {% if ai_configured and not group.has_facts %}
+
+            <form
+              method="post"
+              action="/dashboard/extract-source/{{ group.source_id }}"
+            >
+              <button
+                type="submit"
+                class="secondary"
+                style="padding: 6px 11px; font-size: 12px"
+              >
+                {{ icon('sparkle', 13) }} Extract facts
+              </button>
+            </form>
+
+            {% endif %}
+
+            <form
+              method="post"
+              action="/dashboard/delete-source/{{ group.source_id }}"
+              onsubmit="
+                return confirm(
+                  'Delete this source and all its memories? This cannot be undone.',
+                );
+              "
+            >
+              <button
+                type="submit"
+                class="secondary"
+                style="
+                  padding: 6px 11px;
+                  font-size: 12px;
+                  color: var(--error);
+                  border-color: var(--error-soft);
+                "
+              >
+                {{ icon('trash', 13) }} Delete
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {% for chunk in group.chunks[:2] %}
+
+        <p class="memory-chunk">
+          {{ chunk[:180] }} {% if chunk|length > 180 %}...{% endif %}
+        </p>
+
+        {% endfor %} {% if group.chunks|length > 2 %}
+
+        <p class="muted" style="margin-top: 6px">
+          +{{ group.chunks|length - 2 }} more chunk{{ 's' if group.chunks|length
+          - 2 != 1 else '' }}
+        </p>
+
+        {% endif %}
+      </div>
+
+      {% endfor %} {% if memory_groups and ai_configured %}
+
+      <div class="hint">
+        {{ icon('info', 13) }}
+
+        <span>
+          "Extract facts" identifies promises, tasks, and decisions and sends
+          them to
+          <a href="/reminders">Reminders</a>.
+        </span>
+      </div>
+
+      {% endif %}
+    </div>
   </div>
-  {% endfor %} {% if memory_groups and ai_configured %}
-  <p class="muted" style="margin-top: 12px">
-    "Extract facts" finds promises, tasks, and decisions in that source and
-    sends them to
-    <a href="/reminders" style="color: var(--accent)">Reminders</a>.
-  </p>
-  {% endif %}
 </div>
+
 {% endblock %}
