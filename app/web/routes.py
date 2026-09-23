@@ -148,15 +148,12 @@ def register_submit(
 
     verify_link = f"{str(request.base_url).rstrip('/')}/verify-email?token={token}"
 
-    try:
+        try:
         send_verification_email(email, verify_link)
-    except (EmailNotConfiguredError, EmailSendError):
-        # Honest dev-environment fallback: no SMTP configured (or it
-        # failed), so verification can't actually be delivered. Rather
-        # than leave the person stuck with an account they can never
-        # confirm, create it immediately -- same as before this feature
-        # existed -- and say so plainly rather than pretending an email
-        # was sent.
+    except EmailNotConfiguredError:
+        # No SMTP credentials set at all -- verification genuinely can't
+        # run here. Create the account immediately rather than leaving
+        # the person stuck with no way to confirm it.
         auth_service.register_user(db, email=email, password=password)
         return templates.TemplateResponse(
             request,
@@ -167,6 +164,24 @@ def register_submit(
                 "message": (
                     "Email verification isn't configured on this server, so your account "
                     "was created immediately. You can log in now."
+                ),
+            },
+        )
+    except EmailSendError as exc:
+        # Credentials ARE set, but the actual send failed (wrong
+        # password, network block, Gmail rejecting the connection,
+        # etc.) -- a genuinely different problem worth seeing plainly,
+        # not hidden behind the "not configured" message above.
+        auth_service.register_user(db, email=email, password=password)
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {
+                "user": None,
+                "error": None,
+                "message": (
+                    f"Your account was created, but the confirmation email failed to send "
+                    f"({exc}). You can log in now — this is worth fixing on the server."
                 ),
             },
         )
