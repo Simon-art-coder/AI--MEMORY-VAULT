@@ -637,11 +637,6 @@
           href="/events"
           >{{ icon('calendar') }} Events</a
         >
-        <a
-          class="nav-link {% if request.url.path == '/status' %}active{% endif %}"
-          href="/status"
-          >{{ icon('activity') }} Status</a
-        >
         <div class="sidebar-footer">
           <div class="user-chip">
             <div class="user-avatar">{{ user.email[0]|upper }}</div>
