@@ -1,0 +1,59 @@
+{% extends "base.html" %} {% block title %}Chat — AI Memory Vault{% endblock %}
+{% block content %}
+<h2>Chat</h2>
+
+<div class="card">
+  <h3>Ask a question</h3>
+  <form method="post" action="/chat">
+    <input
+      type="text"
+      name="question"
+      placeholder="What did John promise me?"
+      value="{{ question or '' }}"
+      required
+    />
+    <button type="submit">Ask</button>
+  </form>
+</div>
+
+{% if answer %}
+<div class="card">
+  {% if not answer_generated %}
+  <p class="warning">Not AI-generated — see message below.</p>
+  {% endif %}
+  <p>{{ answer }}</p>
+  {% if sources %}
+  <h3 style="margin-top: 16px">Sources</h3>
+  {% for s in sources %}
+  <div class="excerpt">
+    <strong>{{ s.source_filename }}</strong>
+    <span class="badge"
+      >{{ "%.0f"|format(s.relevance_score * 100) }}% match</span
+    ><br />
+    {{ s.excerpt }}
+  </div>
+  {% endfor %} {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Tell it something to remember</h3>
+  <p class="muted" style="margin-top: -4px">
+    This saves what you type as a new memory — same as uploading a document,
+    just typed instead. It won't happen automatically from asking questions
+    above.
+  </p>
+  <form method="post" action="/chat/capture">
+    <textarea
+      name="note"
+      rows="3"
+      placeholder="e.g. Had lunch with Sarah today, she mentioned the Q3 budget review is moved to next Friday."
+      required
+    ></textarea>
+    <button type="submit">Save as memory</button>
+  </form>
+  {% if capture_saved %}
+  <p class="muted" style="color: var(--accent); margin-top: 8px">Saved.</p>
+  {% endif %}
+</div>
+{% endblock %}

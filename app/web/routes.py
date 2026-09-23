@@ -1,0 +1,503 @@
+"""
+Browser-rendered pages.
+
+These routes call the exact same service functions as the JSON API
+(app/services/...) — there is no separate "web version" of the business
+logic. Only the transport differs: HTML forms and redirects instead of
+JSON request/response bodies.
+
+Note on TemplateResponse: this uses the current Starlette signature,
+TemplateResponse(request, name, context), where request is a separate
+positional argument and does NOT go inside the context dict.
+"""
+
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.ai.embeddings import embed_text
+from app.ai.llm_client import LLMNotConfiguredError, LLMRequestError, generate
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.ingestion.extractors import ExtractionFailedError, UnsupportedFileTypeError
+from app.ingestion.whatsapp_parser import WhatsAppParseError
+from app.models.user import User
+from app.repositories.memory_repository import (
+    delete_source as delete_source_record,
+    get_all_memories_for_user,
+    get_source_by_id,
+)
+from app.search.search_service import search_memories
+from app.services import auth_service
+from app.services.auth_service import EmailAlreadyRegisteredError, InvalidCredentialsError
+from app.services.capture_service import capture_note
+from app.services.events_service import get_events_and_decisions
+from app.services.extraction_service import ExtractionSkippedNotConfigured, run_extraction_for_memory
+from app.services.ingestion_service import ingest_document
+from app.services.rag_service import answer_question
+from app.services.reminder_service import get_outstanding_reminders
+from app.services.timeline_service import get_timeline
+from app.services.whatsapp_ingestion_service import ingest_whatsapp_export
+from app.web.auth_web import COOKIE_NAME, get_current_user_from_cookie
+
+router = APIRouter()
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+# Workaround for a known Jinja2/Python 3.14 incompatibility: the template
+# cache's key construction breaks under 3.14 ("cannot use 'tuple' as a
+# dict key"). Disabling the cache avoids it — templates are small here,
+# so re-parsing on each request has negligible cost.
+templates.env.cache = None
+
+
+def _ai_configured() -> bool:
+    return bool(get_settings().groq_api_key)
+
+
+def _embedding_provider(settings) -> str:
+    if settings.gemini_api_key:
+        return "Gemini (gemini-embedding-001)"
+    if settings.openai_api_key:
+        return "OpenAI (text-embedding-3-small)"
+    return "local fallback (no key set)"
+
+
+def _check_db(db: Session) -> tuple[bool, str | None]:
+    try:
+        db.execute(text("SELECT 1"))
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _build_memory_groups(memories) -> list[dict]:
+    """Groups a flat list of Memory chunks by their source document/note."""
+    groups: dict[str, dict] = {}
+    for m in memories:
+        key = m.source_id
+        if key not in groups:
+            groups[key] = {
+                "source_id": key,
+                "filename": m.source.filename,
+                "created_at": m.source.created_at,
+                "chunks": [],
+                "has_facts": False,
+            }
+        groups[key]["chunks"].append(m.content)
+        if m.extracted_facts:
+            groups[key]["has_facts"] = True
+    return list(groups.values())
+
+
+@router.get("/", response_class=HTMLResponse)
+def root(user: User | None = Depends(get_current_user_from_cookie)):
+    return RedirectResponse("/dashboard" if user else "/login")
+
+
+# --- Auth pages ---
+
+@router.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    return templates.TemplateResponse(request, "register.html", {"user": None})
+
+
+@router.post("/register", response_class=HTMLResponse)
+def register_submit(
+    request: Request, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)
+):
+    try:
+        auth_service.register_user(db, email=email, password=password)
+    except EmailAlreadyRegisteredError:
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {"user": None, "error": "An account with this email already exists."},
+        )
+    return RedirectResponse("/login", status_code=303)
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html", {"user": None})
+
+
+@router.post("/login", response_class=HTMLResponse)
+def login_submit(
+    request: Request, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)
+):
+    try:
+        token = auth_service.authenticate_user(db, email=email, password=password)
+    except InvalidCredentialsError:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"user": None, "error": "Incorrect email or password."},
+        )
+
+    response = RedirectResponse("/dashboard", status_code=303)
+    settings = get_settings()
+    response.set_cookie(
+        COOKIE_NAME, token, httponly=True,
+        secure=(settings.environment == "production"),
+        samesite="lax",
+    )
+    return response
+
+
+@router.get("/logout")
+def logout():
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(COOKIE_NAME)
+    return response
+
+
+# --- App pages (require login) ---
+
+@router.get("/dashboard", response_class=HTMLResponse)
+def dashboard(
+    request: Request,
+    q: str | None = None,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+
+    search_results = None
+    if q:
+        settings = get_settings()
+        results = search_memories(db, user.id, q, limit=settings.max_search_results)
+        search_results = [
+            {"source_filename": m.source.filename, "excerpt": m.content[:200], "relevance_score": score}
+            for m, score in results
+        ]
+
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {
+            "user": user,
+            "memory_groups": memory_groups,
+            "query": q,
+            "search_results": search_results,
+            "ai_configured": _ai_configured(),
+            "upload_error": None,
+            "whatsapp_error": None,
+        },
+    )
+
+
+@router.post("/dashboard/upload", response_class=HTMLResponse)
+async def dashboard_upload(
+    request: Request,
+    file: UploadFile,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    file_bytes = await file.read()
+    try:
+        ingest_document(db, user_id=user.id, filename=file.filename, file_bytes=file_bytes)
+    except (UnsupportedFileTypeError, ExtractionFailedError) as exc:
+        memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+        return templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {
+                "user": user,
+                "memory_groups": memory_groups,
+                "query": None,
+                "search_results": None,
+                "upload_error": str(exc),
+                "whatsapp_error": None,
+                "ai_configured": _ai_configured(),
+            },
+        )
+
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/dashboard/upload-whatsapp", response_class=HTMLResponse)
+async def dashboard_upload_whatsapp(
+    request: Request,
+    file: UploadFile,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    file_bytes = await file.read()
+    try:
+        ingest_whatsapp_export(db, user_id=user.id, filename=file.filename, file_bytes=file_bytes)
+    except WhatsAppParseError as exc:
+        memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+        return templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {
+                "user": user,
+                "memory_groups": memory_groups,
+                "query": None,
+                "search_results": None,
+                "upload_error": None,
+                "whatsapp_error": str(exc),
+                "ai_configured": _ai_configured(),
+            },
+        )
+
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/dashboard/delete-source/{source_id}")
+def dashboard_delete_source(
+    source_id: str,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    source = get_source_by_id(db, user.id, source_id)
+    if source is not None:
+        delete_source_record(db, source)
+
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/dashboard/extract-source/{source_id}")
+def dashboard_extract_source(
+    source_id: str,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    memories = [m for m in get_all_memories_for_user(db, user.id) if m.source_id == source_id]
+    for memory in memories:
+        try:
+            run_extraction_for_memory(db, memory)
+        except ExtractionSkippedNotConfigured:
+            break  # no key configured — stop, don't retry the same failure per chunk
+        except Exception:
+            continue  # one bad chunk shouldn't block extraction on the rest
+
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.get("/chat", response_class=HTMLResponse)
+def chat_page(request: Request, user: User | None = Depends(get_current_user_from_cookie)):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "chat.html", {"user": user})
+
+
+@router.post("/chat", response_class=HTMLResponse)
+def chat_submit(
+    request: Request,
+    question: str = Form(...),
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    result = answer_question(db, user.id, question)
+    sources = [
+        {"source_filename": s.source_filename, "excerpt": s.excerpt, "relevance_score": s.relevance_score}
+        for s in result.sources
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "chat.html",
+        {
+            "user": user,
+            "question": question,
+            "answer": result.answer,
+            "answer_generated": result.answer_generated,
+            "sources": sources,
+        },
+    )
+
+
+@router.post("/chat/capture", response_class=HTMLResponse)
+def chat_capture(
+    request: Request,
+    note: str = Form(...),
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    capture_note(db, user_id=user.id, text=note)
+
+    return templates.TemplateResponse(
+        request,
+        "chat.html",
+        {"user": user, "capture_saved": True},
+    )
+
+
+@router.get("/events", response_class=HTMLResponse)
+def events_page(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    events = get_events_and_decisions(db, user.id)
+    return templates.TemplateResponse(
+        request,
+        "events.html",
+        {"user": user, "events": events, "ai_configured": _ai_configured()},
+    )
+
+
+@router.get("/timeline", response_class=HTMLResponse)
+def timeline_page(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    entries = get_timeline(db, user.id)
+    return templates.TemplateResponse(request, "timeline.html", {"user": user, "entries": entries})
+
+
+@router.get("/reminders", response_class=HTMLResponse)
+def reminders_page(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    reminders = get_outstanding_reminders(db, user.id)
+    return templates.TemplateResponse(
+        request,
+        "reminders.html",
+        {"user": user, "reminders": reminders, "ai_configured": _ai_configured()},
+    )
+
+
+# --- Status page ---
+
+@router.get("/status", response_class=HTMLResponse)
+def status_page(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    settings = get_settings()
+    db_ok, db_error = _check_db(db)
+
+    return templates.TemplateResponse(
+        request,
+        "status.html",
+        {
+            "user": user,
+            "db_ok": db_ok,
+            "db_error": db_error,
+            "groq_configured": bool(settings.groq_api_key),
+            "llm_model": settings.llm_model,
+            "embedding_provider": _embedding_provider(settings),
+            "chat_test_result": None,
+            "chat_test_ok": None,
+            "embed_test_result": None,
+            "embed_test_ok": None,
+        },
+    )
+
+
+@router.post("/status/test-chat", response_class=HTMLResponse)
+def status_test_chat(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    settings = get_settings()
+    result, ok = None, False
+    try:
+        generate("You are a test.", "Reply with the single word: OK", max_tokens=10)
+        result, ok = "✅ Chat API responded successfully.", True
+    except LLMNotConfiguredError as exc:
+        result = f"⚠ {exc}"
+    except LLMRequestError as exc:
+        result = f"❌ {exc}"
+
+    db_ok, db_error = _check_db(db)
+
+    return templates.TemplateResponse(
+        request,
+        "status.html",
+        {
+            "user": user,
+            "db_ok": db_ok,
+            "db_error": db_error,
+            "groq_configured": bool(settings.groq_api_key),
+            "llm_model": settings.llm_model,
+            "embedding_provider": _embedding_provider(settings),
+            "chat_test_result": result,
+            "chat_test_ok": ok,
+            "embed_test_result": None,
+            "embed_test_ok": None,
+        },
+    )
+
+
+@router.post("/status/test-embeddings", response_class=HTMLResponse)
+def status_test_embeddings(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    settings = get_settings()
+    result, ok = None, False
+    try:
+        vector = embed_text("test")
+        result, ok = f"✅ Embeddings API responded successfully ({len(vector)} dimensions).", True
+    except Exception as exc:
+        result = f"❌ {exc}"
+
+    db_ok, db_error = _check_db(db)
+
+    return templates.TemplateResponse(
+        request,
+        "status.html",
+        {
+            "user": user,
+            "db_ok": db_ok,
+            "db_error": db_error,
+            "groq_configured": bool(settings.groq_api_key),
+            "llm_model": settings.llm_model,
+            "embedding_provider": _embedding_provider(settings),
+            "chat_test_result": None,
+            "chat_test_ok": None,
+            "embed_test_result": result,
+            "embed_test_ok": ok,
+        },
+    )

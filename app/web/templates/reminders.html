@@ -1,0 +1,23 @@
+{% extends "base.html" %} {% block title %}Reminders — AI Memory Vault{%
+endblock %} {% block content %}
+<div class="card">
+  <h3>Outstanding promises & tasks</h3>
+  {% if not ai_configured %}
+  <p class="warning">
+    This is always empty without GROQ_API_KEY set — extraction never ran.
+  </p>
+  {% elif not reminders %}
+  <p class="muted">
+    None found. This only shows facts already extracted from your memories.
+  </p>
+  {% endif %} {% for r in reminders %}
+  <div class="excerpt">
+    <strong>{{ r.kind|capitalize }}</strong>: {{ r.description }} {% if r.owner
+    %} — owner: {{ r.owner }}{% endif %} {% if r.deadline %} — deadline: {{
+    r.deadline }}{% endif %} <br /><span class="muted"
+      >{{ r.source_filename }}</span
+    >
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

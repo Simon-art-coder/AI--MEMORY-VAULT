@@ -1,0 +1,26 @@
+{% extends "base.html" %} {% block title %}Events — AI Memory Vault{% endblock
+%} {% block content %}
+<h2>Events &amp; Decisions</h2>
+
+<div class="card">
+  {% if not ai_configured %}
+  <p class="warning">
+    This is always empty without GROQ_API_KEY set — extraction never ran.
+  </p>
+  {% elif not events %}
+  <p class="muted">
+    None found. This only shows facts already extracted from your memories —
+    click "Extract facts" on a source in the Dashboard.
+  </p>
+  {% endif %} {% for e in events %}
+  <div class="excerpt">
+    <strong>{{ e.kind|capitalize }}</strong>: {{ e.description }} {% if e.date
+    %} — date: {{ e.date }}{% endif %} {% if e.made_by %} — decided by: {{
+    e.made_by }}{% endif %} <br /><span class="muted"
+      >{{ e.source_filename }} · recorded {{ e.recorded_at.strftime('%Y-%m-%d')
+      }}</span
+    >
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Timeline — AI Memory Vault{% endblock %}
+{% block content %}
+<div class="card">
+    <h3>Timeline</h3>
+    {% if not entries %}
+        <p class="muted">Nothing to show yet — upload a document first.</p>
+    {% endif %}
+    {% for e in entries %}
+    <div class="excerpt">
+        <strong>{{ e.date.strftime('%Y-%m-%d %H:%M') }}</strong> · {{ e.source_filename }}<br>
+        {{ e.excerpt }}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

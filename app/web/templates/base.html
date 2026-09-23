@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}AI Memory Vault{% endblock %}</title>
+    <style>
+      :root {
+        --bg: #0d0e12;
+        --surface: #16181f;
+        --surface-2: #1e2129;
+        --border: #2a2d38;
+        --text: #e8e9ed;
+        --text-muted: #8b8d98;
+        --accent: #7c9eff;
+        --accent-hover: #93b0ff;
+        --warn: #f5c451;
+        --error: #f27878;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.55;
+      }
+      .app-shell {
+        display: flex;
+        min-height: 100vh;
+      }
+      .sidebar {
+        width: 220px;
+        flex-shrink: 0;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 20px 14px;
+        display: flex;
+        flex-direction: column;
+      }
+      .brand {
+        font-weight: 700;
+        font-size: 16px;
+        padding: 6px 10px 20px;
+        letter-spacing: -0.01em;
+      }
+      .brand span {
+        color: var(--accent);
+      }
+      .nav-link {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 10px;
+        border-radius: 8px;
+        margin-bottom: 2px;
+        color: var(--text-muted);
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .nav-link:hover {
+        background: var(--surface-2);
+        color: var(--text);
+      }
+      .sidebar-footer {
+        margin-top: auto;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .sidebar-footer a {
+        color: var(--text-muted);
+      }
+      .content {
+        flex: 1;
+        padding: 32px 40px;
+        max-width: 760px;
+      }
+      h1,
+      h2,
+      h3 {
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 0 0 16px;
+      }
+      h3 {
+        font-size: 15px;
+        margin: 0 0 12px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 18px;
+      }
+      input,
+      textarea,
+      button,
+      select {
+        font-family: inherit;
+        font-size: 14px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+      }
+      input,
+      textarea {
+        width: 100%;
+        margin-bottom: 10px;
+      }
+      button {
+        background: var(--accent);
+        color: #0d0e12;
+        border: none;
+        cursor: pointer;
+        font-weight: 650;
+        padding: 10px 18px;
+      }
+      button:hover {
+        background: var(--accent-hover);
+      }
+      .muted {
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+      .error {
+        color: var(--error);
+        font-size: 13px;
+      }
+      .warning {
+        background: rgba(245, 196, 81, 0.1);
+        border: 1px solid rgba(245, 196, 81, 0.3);
+        color: var(--warn);
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+      .excerpt {
+        background: var(--surface-2);
+        padding: 12px 14px;
+        border-radius: 8px;
+        margin-top: 10px;
+        font-size: 13.5px;
+        border: 1px solid var(--border);
+      }
+      .badge {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 20px;
+        background: var(--surface-2);
+        color: var(--text-muted);
+        margin-left: 6px;
+      }
+      form {
+        margin-bottom: 0;
+      }
+      @media (max-width: 700px) {
+        .app-shell {
+          flex-direction: column;
+        }
+        .sidebar {
+          width: 100%;
+          flex-direction: row;
+          align-items: center;
+          overflow-x: auto;
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+        .sidebar-footer {
+          display: none;
+        }
+        .content {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    {% if user %}
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">Memory<span>Vault</span></div>
+        <a class="nav-link" href="/dashboard">📂 Dashboard</a>
+        <a class="nav-link" href="/chat">💬 Chat</a>
+        <a class="nav-link" href="/timeline">🕘 Timeline</a>
+        <a class="nav-link" href="/reminders">📌 Reminders</a>
+        <a class="nav-link" href="/events">🗓️ Events</a>
+        <a class="nav-link" href="/status">🩺 Status</a>
+        <div class="sidebar-footer">
+          {{ user.email }}<br /><a href="/logout">Log out</a>
+        </div>
+      </aside>
+      <main class="content">{% block content %}{% endblock %}</main>
+    </div>
+    {% else %}
+    <main class="content" style="max-width: 400px; margin: 60px auto">
+      {{ self.content() }}
+    </main>
+    {% endif %}
+  </body>
+</html>

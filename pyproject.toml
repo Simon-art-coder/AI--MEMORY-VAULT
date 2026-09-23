@@ -1,0 +1,16 @@
+[project]
+name = "memory-vault"
+version = "0.1.0"
+description = "Personal AI memory system with semantic search and RAG-based Q&A"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]

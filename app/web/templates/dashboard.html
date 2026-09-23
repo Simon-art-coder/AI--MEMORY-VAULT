@@ -1,0 +1,168 @@
+{% extends "base.html" %} {% block title %}Dashboard — AI Memory Vault{%
+endblock %} {% block content %}
+<h2>Dashboard</h2>
+
+{% if not ai_configured %}
+<div class="warning" style="margin-bottom: 18px">
+  No GROQ_API_KEY set — chat answers and fact extraction are disabled. Search
+  and upload still work.
+  <a href="/status" style="color: inherit">Check status</a>.
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Upload a document</h3>
+  {% if upload_error %}
+  <p class="error">{{ upload_error }}</p>
+  {% endif %}
+  <form method="post" action="/dashboard/upload" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".txt,.md,.pdf,.docx" required />
+    <button type="submit">Upload</button>
+  </form>
+  <p class="muted">
+    Supported: .txt, .md, .pdf, .docx — or use
+    <a href="/chat" style="color: var(--accent)">Chat</a> to type a note
+    instead.
+  </p>
+</div>
+
+<div class="card">
+  <h3>Import a WhatsApp chat</h3>
+  {% if whatsapp_error %}
+  <p class="error">{{ whatsapp_error }}</p>
+  {% endif %}
+  <form
+    method="post"
+    action="/dashboard/upload-whatsapp"
+    enctype="multipart/form-data"
+  >
+    <input type="file" name="file" accept=".txt" required />
+    <button type="submit">Import chat</button>
+  </form>
+  <p class="muted">
+    In WhatsApp: open the chat &rarr; ⋮ menu &rarr; More &rarr; Export chat
+    &rarr; Without Media. Upload the .txt file it creates.
+  </p>
+</div>
+
+<div class="card">
+  <h3>Search your memories</h3>
+  <form method="get" action="/dashboard">
+    <input
+      type="text"
+      name="q"
+      placeholder="Search..."
+      value="{{ query or '' }}"
+    />
+    <button type="submit">Search</button>
+  </form>
+  {% if search_results is not none %}
+  <p class="muted">{{ search_results|length }} result(s) for "{{ query }}"</p>
+  {% for r in search_results %}
+  <div class="excerpt">
+    <strong>{{ r.source_filename }}</strong>
+    <span class="badge"
+      >{{ "%.0f"|format(r.relevance_score * 100) }}% match</span
+    ><br />
+    {{ r.excerpt }}
+  </div>
+  {% endfor %} {% endif %}
+</div>
+
+<div class="card">
+  <h3>
+    Your memories ({{ memory_groups|length }} source{{ 's' if
+    memory_groups|length != 1 else '' }})
+  </h3>
+  {% if not memory_groups %}
+  <p class="muted">
+    Nothing yet — upload a document, import a WhatsApp chat, or add a note in
+    Chat.
+  </p>
+  {% endif %} {% for group in memory_groups %}
+  <div class="excerpt">
+    <div
+      style="
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+      "
+    >
+      <div>
+        <strong>{{ group.filename }}</strong>
+        <span class="badge"
+          >{{ group.chunks|length }} chunk{{ 's' if group.chunks|length != 1
+          else '' }}</span
+        >
+        {% if group.has_facts %}<span class="badge" style="color: var(--accent)"
+          >facts extracted</span
+        >{% endif %}
+        <br />
+        <span class="muted"
+          >{{ group.created_at.strftime('%Y-%m-%d %H:%M') }}</span
+        >
+      </div>
+      <div style="display: flex; gap: 6px; flex-shrink: 0">
+        {% if ai_configured and not group.has_facts %}
+        <form
+          method="post"
+          action="/dashboard/extract-source/{{ group.source_id }}"
+        >
+          <button
+            type="submit"
+            style="
+              background: var(--surface-2);
+              color: var(--accent);
+              border: 1px solid var(--border);
+              padding: 6px 12px;
+              font-size: 12px;
+            "
+          >
+            Extract facts
+          </button>
+        </form>
+        {% endif %}
+        <form
+          method="post"
+          action="/dashboard/delete-source/{{ group.source_id }}"
+          onsubmit="
+            return confirm(
+              'Delete this source and all its memories? This cannot be undone.',
+            );
+          "
+        >
+          <button
+            type="submit"
+            style="
+              background: var(--surface-2);
+              color: var(--error);
+              border: 1px solid var(--border);
+              padding: 6px 12px;
+              font-size: 12px;
+            "
+          >
+            Delete
+          </button>
+        </form>
+      </div>
+    </div>
+    {% for chunk in group.chunks[:2] %}
+    <p style="margin: 8px 0 0; font-size: 13px">
+      {{ chunk[:180] }}{% if chunk|length > 180 %}...{% endif %}
+    </p>
+    {% endfor %} {% if group.chunks|length > 2 %}
+    <p class="muted" style="margin-top: 6px">
+      +{{ group.chunks|length - 2 }} more chunk(s)
+    </p>
+    {% endif %}
+  </div>
+  {% endfor %} {% if memory_groups and ai_configured %}
+  <p class="muted" style="margin-top: 12px">
+    "Extract facts" finds promises, tasks, and decisions in that source and
+    sends them to
+    <a href="/reminders" style="color: var(--accent)">Reminders</a>.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

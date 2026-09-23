@@ -1,0 +1,57 @@
+{% extends "base.html" %} {% block title %}Status — AI Memory Vault{% endblock
+%} {% block content %}
+<h2>System status</h2>
+
+<div class="card">
+  <h3>Database</h3>
+  {% if db_ok %}
+  <p>✅ Connected</p>
+  {% else %}
+  <p class="error">❌ Not reachable — {{ db_error }}</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Groq — chat answers &amp; extraction</h3>
+  {% if not groq_configured %}
+  <p class="warning">
+    No GROQ_API_KEY set in .env — chat and extraction are disabled.
+  </p>
+  {% else %}
+  <p class="muted">
+    Key is set (model: {{ llm_model }}). This only confirms a key is configured,
+    not that it currently works — use the button below for a real check.
+  </p>
+  <form method="post" action="/status/test-chat">
+    <button type="submit">Test chat API now</button>
+  </form>
+  {% if chat_test_result %}
+  <p style="margin-top: 10px" class="{{ 'error' if not chat_test_ok else '' }}">
+    {{ chat_test_result }}
+  </p>
+  {% endif %} {% endif %}
+</div>
+
+<div class="card">
+  <h3>Embeddings — semantic search</h3>
+  <p class="muted">Provider: {{ embedding_provider }}</p>
+  {% if embedding_provider != 'local fallback (no key set)' %}
+  <form method="post" action="/status/test-embeddings">
+    <button type="submit">Test embeddings API now</button>
+  </form>
+  {% if embed_test_result %}
+  <p
+    style="margin-top: 10px"
+    class="{{ 'error' if not embed_test_ok else '' }}"
+  >
+    {{ embed_test_result }}
+  </p>
+  {% endif %} {% endif %}
+</div>
+
+<p class="muted">
+  These "test now" buttons make one real, small API call on demand — they don't
+  run automatically on page load, so loading this page never burns API quota by
+  itself.
+</p>
+{% endblock %}
