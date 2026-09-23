@@ -148,7 +148,7 @@ def register_submit(
 
     verify_link = f"{str(request.base_url).rstrip('/')}/verify-email?token={token}"
 
-        try:
+    try:
         send_verification_email(email, verify_link)
     except EmailNotConfiguredError:
         # No SMTP credentials set at all -- verification genuinely can't
@@ -452,9 +452,9 @@ def dashboard_extract_source(
         try:
             run_extraction_for_memory(db, memory)
         except ExtractionSkippedNotConfigured:
-            break  # no key configured — stop, don't retry the same failure per chunk
+            break
         except Exception:
-            continue  # one bad chunk shouldn't block extraction on the rest
+            continue
 
     return RedirectResponse("/dashboard", status_code=303)
 
