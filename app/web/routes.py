@@ -5,14 +5,11 @@ These routes call the exact same service functions as the JSON API
 (app/services/...) — there is no separate "web version" of the business
 logic. Only the transport differs: HTML forms and redirects instead of
 JSON request/response bodies.
-
-Note on TemplateResponse: this uses the current Starlette signature,
-TemplateResponse(request, name, context), where request is a separate
-positional argument and does NOT go inside the context dict.
 """
 
 from pathlib import Path
 
+from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -23,7 +20,12 @@ from app.ai.embeddings import embed_text
 from app.ai.llm_client import LLMNotConfiguredError, LLMRequestError, generate
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.email import EmailNotConfiguredError, EmailSendError, send_password_reset_email
+from app.core.email import (
+    EmailNotConfiguredError,
+    EmailSendError,
+    send_password_reset_email,
+    send_verification_email,
+)
 from app.ingestion.extractors import ExtractionFailedError, UnsupportedFileTypeError
 from app.ingestion.whatsapp_parser import WhatsAppParseError
 from app.models.user import User
@@ -38,6 +40,7 @@ from app.services.auth_service import (
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
     InvalidOrExpiredResetTokenError,
+    InvalidOrExpiredVerificationTokenError,
 )
 from app.services.capture_service import capture_note
 from app.services.events_service import get_events_and_decisions
@@ -48,7 +51,6 @@ from app.services.reminder_service import get_outstanding_reminders
 from app.services.timeline_service import get_timeline
 from app.services.whatsapp_ingestion_service import ingest_whatsapp_export
 from app.web.auth_web import COOKIE_NAME, get_current_user_from_cookie
-from email_validator import validate_email, EmailNotValidError
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -107,7 +109,7 @@ def root(user: User | None = Depends(get_current_user_from_cookie)):
 
 @router.get("/register", response_class=HTMLResponse)
 def register_page(request: Request):
-    return templates.TemplateResponse(request, "register.html", {"user": None})
+    return templates.TemplateResponse(request, "register.html", {"user": None, "error": None, "message": None})
 
 
 @router.post("/register", response_class=HTMLResponse)
@@ -122,7 +124,7 @@ def register_submit(
         return templates.TemplateResponse(
             request,
             "register.html",
-            {"user": None, "error": "Passwords do not match."},
+            {"user": None, "error": "Passwords do not match.", "message": None},
         )
 
     try:
@@ -132,18 +134,71 @@ def register_submit(
         return templates.TemplateResponse(
             request,
             "register.html",
-            {"user": None, "error": f"Please enter a valid email address: {exc}"},
+            {"user": None, "error": f"Please enter a valid email address: {exc}", "message": None},
         )
 
     try:
-        auth_service.register_user(db, email=email, password=password)
+        token = auth_service.create_verification_token_for_new_user(db, email=email, password=password)
     except EmailAlreadyRegisteredError:
         return templates.TemplateResponse(
             request,
             "register.html",
-            {"user": None, "error": "An account with this email already exists."},
+            {"user": None, "error": "An account with this email already exists.", "message": None},
         )
-    return RedirectResponse("/login", status_code=303)
+
+    verify_link = f"{str(request.base_url).rstrip('/')}/verify-email?token={token}"
+
+    try:
+        send_verification_email(email, verify_link)
+    except (EmailNotConfiguredError, EmailSendError):
+        # Honest dev-environment fallback: no SMTP configured (or it
+        # failed), so verification can't actually be delivered. Rather
+        # than leave the person stuck with an account they can never
+        # confirm, create it immediately -- same as before this feature
+        # existed -- and say so plainly rather than pretending an email
+        # was sent.
+        auth_service.register_user(db, email=email, password=password)
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {
+                "user": None,
+                "error": None,
+                "message": (
+                    "Email verification isn't configured on this server, so your account "
+                    "was created immediately. You can log in now."
+                ),
+            },
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "register.html",
+        {
+            "user": None,
+            "error": None,
+            "message": f"Check {email} for a confirmation link to finish creating your account.",
+        },
+    )
+
+
+@router.get("/verify-email", response_class=HTMLResponse)
+def verify_email(request: Request, token: str, db: Session = Depends(get_db)):
+    try:
+        auth_service.complete_registration(db, token=token)
+    except (InvalidOrExpiredVerificationTokenError, EmailAlreadyRegisteredError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {"user": None, "error": str(exc), "message": None},
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "register.html",
+        {"user": None, "error": None, "message": "Your account is confirmed. You can log in now."},
+    )
+
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
@@ -424,15 +479,7 @@ def chat_submit(
         },
     )
 
-@router.get("/profile", response_class=HTMLResponse)
-def profile_page(
-    request: Request,
-    user: User | None = Depends(get_current_user_from_cookie),
-    db: Session = Depends(get_db),
-):
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "profile.html", {"user": user})
+
 @router.post("/chat/capture", response_class=HTMLResponse)
 def chat_capture(
     request: Request,
@@ -450,6 +497,17 @@ def chat_capture(
         "chat.html",
         {"user": user, "capture_saved": True},
     )
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def profile_page(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "profile.html", {"user": user})
 
 
 @router.get("/events", response_class=HTMLResponse)

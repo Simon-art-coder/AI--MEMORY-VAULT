@@ -1,12 +1,5 @@
 """
-Password reset email sending, via Gmail SMTP.
-
-Degrades honestly, same pattern as the AI providers: if no SMTP
-credentials are configured, this raises EmailNotConfiguredError rather
-than silently failing or pretending to have sent something. The route
-that calls this must catch that and tell the user plainly, without
-revealing whether their specific email exists in the system (to avoid
-leaking which addresses are registered).
+Transactional email sending, via Gmail SMTP.
 """
 
 import smtplib
@@ -23,7 +16,7 @@ class EmailSendError(Exception):
     pass
 
 
-def send_password_reset_email(to_email: str, reset_link: str) -> None:
+def _send(to_email: str, subject: str, body: str) -> None:
     settings = get_settings()
 
     if not settings.smtp_username or not settings.smtp_password:
@@ -32,15 +25,8 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
         )
 
     from_email = settings.smtp_from_email or settings.smtp_username
-
-    body = (
-        "You asked to reset your AI Memory Vault password.\n\n"
-        f"Click this link to choose a new password (valid for 30 minutes):\n{reset_link}\n\n"
-        "If you didn't request this, you can safely ignore this email — "
-        "your password will not be changed."
-    )
     message = MIMEText(body)
-    message["Subject"] = "Reset your AI Memory Vault password"
+    message["Subject"] = subject
     message["From"] = from_email
     message["To"] = to_email
 
@@ -50,4 +36,25 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
             server.login(settings.smtp_username, settings.smtp_password)
             server.sendmail(from_email, [to_email], message.as_string())
     except smtplib.SMTPException as exc:
-        raise EmailSendError(f"Failed to send reset email: {exc}") from exc
+        raise EmailSendError(f"Failed to send email: {exc}") from exc
+
+
+def send_password_reset_email(to_email: str, reset_link: str) -> None:
+    body = (
+        "You asked to reset your AI Memory Vault password.\n\n"
+        f"Click this link to choose a new password (valid for 30 minutes):\n{reset_link}\n\n"
+        "If you didn't request this, you can safely ignore this email — "
+        "your password will not be changed."
+    )
+    _send(to_email, "Reset your AI Memory Vault password", body)
+
+
+def send_verification_email(to_email: str, verify_link: str) -> None:
+    body = (
+        "Welcome to AI Memory Vault!\n\n"
+        f"Click this link to confirm your email and finish creating your account "
+        f"(valid for 24 hours):\n{verify_link}\n\n"
+        "If you didn't request this, you can safely ignore this email — "
+        "no account will be created."
+    )
+    _send(to_email, "Confirm your AI Memory Vault account", body)
