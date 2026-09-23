@@ -48,6 +48,7 @@ from app.services.reminder_service import get_outstanding_reminders
 from app.services.timeline_service import get_timeline
 from app.services.whatsapp_ingestion_service import ingest_whatsapp_export
 from app.web.auth_web import COOKIE_NAME, get_current_user_from_cookie
+from email_validator import validate_email, EmailNotValidError
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -125,6 +126,16 @@ def register_submit(
         )
 
     try:
+        validated = validate_email(email, check_deliverability=True)
+        email = validated.normalized
+    except EmailNotValidError as exc:
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {"user": None, "error": f"Please enter a valid email address: {exc}"},
+        )
+
+    try:
         auth_service.register_user(db, email=email, password=password)
     except EmailAlreadyRegisteredError:
         return templates.TemplateResponse(
@@ -133,7 +144,6 @@ def register_submit(
             {"user": None, "error": "An account with this email already exists."},
         )
     return RedirectResponse("/login", status_code=303)
-
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
@@ -181,9 +191,16 @@ def forgot_password_page(request: Request):
 
 @router.post("/forgot-password", response_class=HTMLResponse)
 def forgot_password_submit(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
-    # Same message regardless of whether the email is registered -- this
-    # is deliberate, not an oversight: it stops the endpoint from being
-    # usable to check which email addresses have an account here.
+    try:
+        validated = validate_email(email, check_deliverability=True)
+        email = validated.normalized
+    except EmailNotValidError:
+        return templates.TemplateResponse(
+            request,
+            "forgot_password.html",
+            {"user": None, "message": None, "error": "Please enter a valid email address."},
+        )
+
     generic_message = "If that email is registered, a password reset link has been sent."
 
     token = auth_service.create_reset_token_for_email(db, email)
@@ -192,9 +209,6 @@ def forgot_password_submit(request: Request, email: str = Form(...), db: Session
         try:
             send_password_reset_email(email, reset_link)
         except (EmailNotConfiguredError, EmailSendError):
-            # Deliberately still show the generic success message to the
-            # user (no enumeration leak) -- but this failure is real and
-            # worth checking server logs / the Status page for.
             pass
 
     return templates.TemplateResponse(
@@ -410,7 +424,15 @@ def chat_submit(
         },
     )
 
-
+@router.get("/profile", response_class=HTMLResponse)
+def profile_page(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "profile.html", {"user": user})
 @router.post("/chat/capture", response_class=HTMLResponse)
 def chat_capture(
     request: Request,

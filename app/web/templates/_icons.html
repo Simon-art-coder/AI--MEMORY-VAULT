@@ -15,6 +15,20 @@ color. #} {% macro icon(name, size=18) %} {%- if name == 'home' -%}
   <path d="M3 9.5 10 3l7 6.5" />
   <path d="M5 8.5V17h10V8.5" />
 </svg>
+{%- elif name == 'user' -%}
+<svg
+  width="{{ size }}"
+  height="{{ size }}"
+  viewBox="0 0 20 20"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="10" cy="7" r="3" />
+  <path d="M4.5 17c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5" />
+</svg>
 {%- elif name == 'message-square' -%}
 <svg
   width="{{ size }}"
