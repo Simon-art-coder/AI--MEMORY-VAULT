@@ -31,11 +31,11 @@ def _send(to_email: str, subject: str, body: str) -> None:
     message["To"] = to_email
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
             server.starttls()
             server.login(settings.smtp_username, settings.smtp_password)
             server.sendmail(from_email, [to_email], message.as_string())
-    except smtplib.SMTPException as exc:
+    except (smtplib.SMTPException, OSError) as exc:
         raise EmailSendError(f"Failed to send email: {exc}") from exc
 
 
