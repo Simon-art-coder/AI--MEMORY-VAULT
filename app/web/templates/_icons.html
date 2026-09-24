@@ -285,6 +285,34 @@ color. #} {% macro icon(name, size=18) %} {%- if name == 'home' -%}
   stroke-linecap="round"
   stroke-linejoin="round"
 >
+  {%- elif name == 'mail' -%}
+  <svg
+    width="{{ size }}"
+    height="{{ size }}"
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <rect x="2.5" y="4.5" width="15" height="11" rx="1.5" />
+    <path d="M3 5.5l7 5.5 7-5.5" />
+  </svg>
+  {%- elif name == 'lock' -%}
+  <svg
+    width="{{ size }}"
+    height="{{ size }}"
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <rect x="4.5" y="9" width="11" height="8" rx="1.5" />
+    <path d="M6.5 9V6.5a3.5 3.5 0 0 1 7 0V9" />
+  </svg>
   <path
     d="M10 3v3M10 14v3M3 10h3M14 10h3M5.5 5.5l2 2M12.5 12.5l2 2M5.5 14.5l2-2M12.5 7.5l2-2"
   />
