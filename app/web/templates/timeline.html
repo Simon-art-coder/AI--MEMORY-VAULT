@@ -23,14 +23,10 @@
         flex-wrap: wrap;
       "
     >
-      <strong>{{ entry.source.filename }}</strong>
-      <span class="muted"
-        >{{ entry.created_at.strftime('%b %d, %Y · %H:%M') }}</span
-      >
+      <strong>{{ entry.source_filename }}</strong>
+      <span class="muted">{{ entry.date.strftime('%b %d, %Y · %H:%M') }}</span>
     </div>
-    <p style="margin: 8px 0 0; font-size: 13px">
-      {{ entry.content[:220] }}{% if entry.content|length > 220 %}...{% endif %}
-    </p>
+    <p style="margin: 8px 0 0; font-size: 13px">{{ entry.excerpt }}</p>
   </div>
   {% endfor %}
 </div>
