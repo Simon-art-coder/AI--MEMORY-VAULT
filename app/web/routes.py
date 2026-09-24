@@ -37,6 +37,7 @@ from app.repositories import user_repository
 from app.repositories.memory_repository import (
     delete_source as delete_source_record,
     get_all_memories_for_user,
+    get_all_memories_for_user_light,
     get_source_by_id,
 )
 from app.repositories.person_repository import get_memories_for_person, get_people_for_user
@@ -366,7 +367,7 @@ def dashboard(
     if user is None:
         return RedirectResponse("/login", status_code=303)
 
-    memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+    memory_groups = _build_memory_groups(get_all_memories_for_user_light(db, user.id))
 
     search_results = None
     if q:
@@ -406,7 +407,7 @@ async def dashboard_upload(
     try:
         ingest_document(db, user_id=user.id, filename=file.filename, file_bytes=file_bytes)
     except (UnsupportedFileTypeError, ExtractionFailedError) as exc:
-        memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+        memory_groups = _build_memory_groups(get_all_memories_for_user_light(db, user.id))
         return templates.TemplateResponse(
             request,
             "dashboard.html",
@@ -438,7 +439,7 @@ async def dashboard_upload_whatsapp(
     try:
         ingest_whatsapp_export(db, user_id=user.id, filename=file.filename, file_bytes=file_bytes)
     except WhatsAppParseError as exc:
-        memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+        memory_groups = _build_memory_groups(get_all_memories_for_user_light(db, user.id))
         return templates.TemplateResponse(
             request,
             "dashboard.html",
@@ -482,7 +483,7 @@ def dashboard_extract_source(
     if user is None:
         return RedirectResponse("/login", status_code=303)
 
-    memories = [m for m in get_all_memories_for_user(db, user.id) if m.source_id == source_id]
+    memories = [m for m in get_all_memories_for_user_light(db, user.id) if m.source_id == source_id]
     not_configured = False
     error_message = None
 
@@ -497,7 +498,7 @@ def dashboard_extract_source(
             error_message = f"Extraction failed: {exc}"
             continue
 
-    memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+    memory_groups = _build_memory_groups(get_all_memories_for_user_light(db, user.id))
     return templates.TemplateResponse(
         request,
         "dashboard.html",
