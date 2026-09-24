@@ -1,22 +1,48 @@
-{% extends "base.html" %} {% block title %}Reminders — AI Memory Vault{%
-endblock %} {% block content %}
+{% extends "base.html" %} {% from "_icons.html" import icon %} {% block title
+%}Reminders — AI Memory Vault{% endblock %} {% block content %}
+<h2>Reminders</h2>
+<p class="page-subtitle">
+  Outstanding promises and tasks found in your memories.
+</p>
+
 <div class="card">
-  <h3>Outstanding promises & tasks</h3>
+  <div class="card-header">
+    <div class="card-icon">{{ icon('bell', 18) }}</div>
+    <div class="card-header-text">
+      <h3>Outstanding promises &amp; tasks</h3>
+      <p>
+        Only shows facts already extracted — run "Extract facts" on a source in
+        the Dashboard.
+      </p>
+    </div>
+  </div>
+
   {% if not ai_configured %}
-  <p class="warning">
-    This is always empty without GROQ_API_KEY set — extraction never ran.
-  </p>
+  <div class="warning">
+    {{ icon('alert-triangle', 16) }}
+    <span
+      >This is always empty without GROQ_API_KEY set — extraction never
+      ran.</span
+    >
+  </div>
   {% elif not reminders %}
-  <p class="muted">
-    None found. This only shows facts already extracted from your memories.
-  </p>
+  <div class="empty-state">
+    {{ icon('bell', 26) }}
+    <p style="margin: 0">
+      None found. This only shows facts already extracted from your memories.
+    </p>
+  </div>
   {% endif %} {% for r in reminders %}
   <div class="excerpt">
-    <strong>{{ r.kind|capitalize }}</strong>: {{ r.description }} {% if r.owner
-    %} — owner: {{ r.owner }}{% endif %} {% if r.deadline %} — deadline: {{
-    r.deadline }}{% endif %} <br /><span class="muted"
-      >{{ r.source_filename }}</span
-    >
+    <span class="badge" style="margin-left: 0">{{ r.kind|capitalize }}</span>
+    <p style="margin: 8px 0 0">
+      {{ r.description }} {% if r.owner %}<span class="muted">
+        — owner: {{ r.owner }}</span
+      >{% endif %} {% if r.deadline %}<span class="muted">
+        — deadline: {{ r.deadline }}</span
+      >{% endif %}
+    </p>
+    <span class="muted">{{ r.source_filename }}</span>
   </div>
   {% endfor %}
 </div>

@@ -1,22 +1,49 @@
-{% extends "base.html" %} {% block title %}Events — AI Memory Vault{% endblock
-%} {% block content %}
+{% extends "base.html" %} {% from "_icons.html" import icon %} {% block title
+%}Events — AI Memory Vault{% endblock %} {% block content %}
 <h2>Events &amp; Decisions</h2>
+<p class="page-subtitle">
+  Notable moments and decisions found in your memories.
+</p>
 
 <div class="card">
+  <div class="card-header">
+    <div class="card-icon">{{ icon('calendar', 18) }}</div>
+    <div class="card-header-text">
+      <h3>Recorded events &amp; decisions</h3>
+      <p>
+        Only shows facts already extracted — run "Extract facts" on a source in
+        the Dashboard.
+      </p>
+    </div>
+  </div>
+
   {% if not ai_configured %}
-  <p class="warning">
-    This is always empty without GROQ_API_KEY set — extraction never ran.
-  </p>
+  <div class="warning">
+    {{ icon('alert-triangle', 16) }}
+    <span
+      >This is always empty without GROQ_API_KEY set — extraction never
+      ran.</span
+    >
+  </div>
   {% elif not events %}
-  <p class="muted">
-    None found. This only shows facts already extracted from your memories —
-    click "Extract facts" on a source in the Dashboard.
-  </p>
+  <div class="empty-state">
+    {{ icon('calendar', 26) }}
+    <p style="margin: 0">
+      None found. This only shows facts already extracted from your memories —
+      click "Extract facts" on a source in the Dashboard.
+    </p>
+  </div>
   {% endif %} {% for e in events %}
   <div class="excerpt">
-    <strong>{{ e.kind|capitalize }}</strong>: {{ e.description }} {% if e.date
-    %} — date: {{ e.date }}{% endif %} {% if e.made_by %} — decided by: {{
-    e.made_by }}{% endif %} <br /><span class="muted"
+    <span class="badge" style="margin-left: 0">{{ e.kind|capitalize }}</span>
+    <p style="margin: 8px 0 0">
+      {{ e.description }} {% if e.date %}<span class="muted">
+        — date: {{ e.date }}</span
+      >{% endif %} {% if e.made_by %}<span class="muted">
+        — decided by: {{ e.made_by }}</span
+      >{% endif %}
+    </p>
+    <span class="muted"
       >{{ e.source_filename }} · recorded {{ e.recorded_at.strftime('%Y-%m-%d')
       }}</span
     >

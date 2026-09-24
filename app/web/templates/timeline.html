@@ -1,16 +1,37 @@
-{% extends "base.html" %}
-{% block title %}Timeline — AI Memory Vault{% endblock %}
-{% block content %}
+{% extends "base.html" %} {% from "_icons.html" import icon %} {% block title
+%}Timeline — AI Memory Vault{% endblock %} {% block content %}
+<h2>Timeline</h2>
+<p class="page-subtitle">Everything you've stored, in chronological order.</p>
+
 <div class="card">
-    <h3>Timeline</h3>
-    {% if not entries %}
-        <p class="muted">Nothing to show yet — upload a document first.</p>
-    {% endif %}
-    {% for e in entries %}
-    <div class="excerpt">
-        <strong>{{ e.date.strftime('%Y-%m-%d %H:%M') }}</strong> · {{ e.source_filename }}<br>
-        {{ e.excerpt }}
+  {% if not entries %}
+  <div class="empty-state">
+    {{ icon('clock', 26) }}
+    <p style="margin: 0">
+      Nothing here yet — upload a document, import a WhatsApp chat, or add a
+      note in Chat.
+    </p>
+  </div>
+  {% endif %} {% for entry in entries %}
+  <div class="excerpt">
+    <div
+      style="
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      "
+    >
+      <strong>{{ entry.source.filename }}</strong>
+      <span class="muted"
+        >{{ entry.created_at.strftime('%b %d, %Y · %H:%M') }}</span
+      >
     </div>
-    {% endfor %}
+    <p style="margin: 8px 0 0; font-size: 13px">
+      {{ entry.content[:220] }}{% if entry.content|length > 220 %}...{% endif %}
+    </p>
+  </div>
+  {% endfor %}
 </div>
 {% endblock %}
