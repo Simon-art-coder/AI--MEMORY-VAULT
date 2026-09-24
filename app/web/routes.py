@@ -7,13 +7,14 @@ logic. Only the transport differs: HTML forms and redirects instead of
 JSON request/response bodies.
 """
 
+import logging
 from pathlib import Path
 
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.ai.embeddings import embed_text
@@ -26,14 +27,19 @@ from app.core.email import (
     send_password_reset_email,
     send_verification_email,
 )
+from app.core.rate_limit import RateLimitExceededError, check_rate_limit, get_client_key, record_attempt
+from app.core.security import verify_password
 from app.ingestion.extractors import ExtractionFailedError, UnsupportedFileTypeError
 from app.ingestion.whatsapp_parser import WhatsAppParseError
+from app.models.memory import Person
 from app.models.user import User
+from app.repositories import user_repository
 from app.repositories.memory_repository import (
     delete_source as delete_source_record,
     get_all_memories_for_user,
     get_source_by_id,
 )
+from app.repositories.person_repository import get_memories_for_person, get_people_for_user
 from app.search.search_service import search_memories
 from app.services import auth_service
 from app.services.auth_service import (
@@ -59,6 +65,8 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # dict key"). Disabling the cache avoids it — templates are small here,
 # so re-parsing on each request has negligible cost.
 templates.env.cache = None
+
+logger = logging.getLogger(__name__)
 
 
 def _ai_configured() -> bool:
@@ -120,6 +128,17 @@ def register_submit(
     confirm_password: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    rate_key = get_client_key(request, "register")
+    try:
+        check_rate_limit(rate_key, max_attempts=3, window_seconds=600)
+    except RateLimitExceededError as exc:
+        return templates.TemplateResponse(
+            request,
+            "register.html",
+            {"user": None, "error": f"Too many attempts. Try again in {exc.retry_after_seconds} seconds.", "message": None},
+        )
+    record_attempt(rate_key)
+
     if password != confirm_password:
         return templates.TemplateResponse(
             request,
@@ -151,9 +170,6 @@ def register_submit(
     try:
         send_verification_email(email, verify_link)
     except EmailNotConfiguredError:
-        # No SMTP credentials set at all -- verification genuinely can't
-        # run here. Create the account immediately rather than leaving
-        # the person stuck with no way to confirm it.
         auth_service.register_user(db, email=email, password=password)
         return templates.TemplateResponse(
             request,
@@ -168,10 +184,6 @@ def register_submit(
             },
         )
     except EmailSendError as exc:
-        # Credentials ARE set, but the actual send failed (wrong
-        # password, network block, Gmail rejecting the connection,
-        # etc.) -- a genuinely different problem worth seeing plainly,
-        # not hidden behind the "not configured" message above.
         auth_service.register_user(db, email=email, password=password)
         return templates.TemplateResponse(
             request,
@@ -224,6 +236,17 @@ def login_page(request: Request):
 def login_submit(
     request: Request, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)
 ):
+    rate_key = get_client_key(request, "login")
+    try:
+        check_rate_limit(rate_key, max_attempts=5, window_seconds=300)
+    except RateLimitExceededError as exc:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"user": None, "error": f"Too many attempts. Try again in {exc.retry_after_seconds} seconds."},
+        )
+    record_attempt(rate_key)
+
     try:
         token = auth_service.authenticate_user(db, email=email, password=password)
     except InvalidCredentialsError:
@@ -261,6 +284,17 @@ def forgot_password_page(request: Request):
 
 @router.post("/forgot-password", response_class=HTMLResponse)
 def forgot_password_submit(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
+    rate_key = get_client_key(request, "forgot-password")
+    try:
+        check_rate_limit(rate_key, max_attempts=3, window_seconds=600)
+    except RateLimitExceededError as exc:
+        return templates.TemplateResponse(
+            request,
+            "forgot_password.html",
+            {"user": None, "message": None, "error": f"Too many attempts. Try again in {exc.retry_after_seconds} seconds."},
+        )
+    record_attempt(rate_key)
+
     try:
         validated = validate_email(email, check_deliverability=True)
         email = validated.normalized
@@ -440,6 +474,7 @@ def dashboard_delete_source(
 
 @router.post("/dashboard/extract-source/{source_id}")
 def dashboard_extract_source(
+    request: Request,
     source_id: str,
     user: User | None = Depends(get_current_user_from_cookie),
     db: Session = Depends(get_db),
@@ -448,15 +483,36 @@ def dashboard_extract_source(
         return RedirectResponse("/login", status_code=303)
 
     memories = [m for m in get_all_memories_for_user(db, user.id) if m.source_id == source_id]
+    not_configured = False
+    error_message = None
+
     for memory in memories:
         try:
             run_extraction_for_memory(db, memory)
         except ExtractionSkippedNotConfigured:
+            not_configured = True
             break
-        except Exception:
+        except Exception as exc:
+            logger.exception("Extraction failed for memory %s", memory.id)
+            error_message = f"Extraction failed: {exc}"
             continue
 
-    return RedirectResponse("/dashboard", status_code=303)
+    memory_groups = _build_memory_groups(get_all_memories_for_user(db, user.id))
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {
+            "user": user,
+            "memory_groups": memory_groups,
+            "query": None,
+            "search_results": None,
+            "upload_error": None,
+            "whatsapp_error": (
+                "GROQ_API_KEY isn't configured, so extraction can't run." if not_configured else error_message
+            ),
+            "ai_configured": _ai_configured(),
+        },
+    )
 
 
 @router.get("/chat", response_class=HTMLResponse)
@@ -522,7 +578,63 @@ def profile_page(
 ):
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "profile.html", {"user": user})
+    return templates.TemplateResponse(request, "profile.html", {"user": user, "delete_error": None})
+
+
+@router.post("/profile/delete-account")
+def delete_account(
+    request: Request,
+    password: str = Form(...),
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    if not verify_password(password, user.hashed_password):
+        return templates.TemplateResponse(
+            request,
+            "profile.html",
+            {"user": user, "delete_error": "Incorrect password. Your account was not deleted."},
+        )
+
+    user_repository.delete_user(db, user)
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(COOKIE_NAME)
+    return response
+
+
+@router.get("/people", response_class=HTMLResponse)
+def people_page(
+    request: Request,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    people = get_people_for_user(db, user.id)
+    return templates.TemplateResponse(request, "people.html", {"user": user, "people": people})
+
+
+@router.get("/people/{person_id}", response_class=HTMLResponse)
+def person_detail_page(
+    request: Request,
+    person_id: str,
+    user: User | None = Depends(get_current_user_from_cookie),
+    db: Session = Depends(get_db),
+):
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    person = db.scalars(select(Person).where(Person.user_id == user.id, Person.id == person_id)).first()
+    if person is None:
+        return RedirectResponse("/people", status_code=303)
+
+    memories = get_memories_for_person(db, user.id, person_id)
+    return templates.TemplateResponse(
+        request, "person_detail.html", {"user": user, "person": person, "memories": memories}
+    )
 
 
 @router.get("/events", response_class=HTMLResponse)

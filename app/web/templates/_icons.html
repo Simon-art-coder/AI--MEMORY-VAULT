@@ -29,6 +29,19 @@ color. #} {% macro icon(name, size=18) %} {%- if name == 'home' -%}
   <circle cx="10" cy="7" r="3" />
   <path d="M4.5 17c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5" />
 </svg>
+{%- elif name == 'chevron-left' -%}
+<svg
+  width="{{ size }}"
+  height="{{ size }}"
+  viewBox="0 0 20 20"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.8"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <polyline points="12.5,4.5 6,10 12.5,15.5" />
+</svg>
 {%- elif name == 'message-square' -%}
 <svg
   width="{{ size }}"

@@ -1,0 +1,25 @@
+{% extends "base.html" %} {% from "_icons.html" import icon %} {% block title
+%}People — AI Memory Vault{% endblock %} {% block content %}
+<h2>People</h2>
+<p class="page-subtitle">Everyone mentioned across your memories.</p>
+<div class="card">
+  {% if not people %}
+  <div class="empty-state">
+    {{ icon('user', 26) }}
+    <p style="margin: 0">
+      No one yet — run "Extract facts" on a source to populate this.
+    </p>
+  </div>
+  {% endif %} {% for person in people %}
+  <a href="/people/{{ person.id }}" style="text-decoration: none">
+    <div class="excerpt" style="cursor: pointer">
+      <strong style="color: var(--text)">{{ person.name }}</strong>
+      <span class="badge"
+        >{{ person.memories|length }} memor{{ 'y' if person.memories|length == 1
+        else 'ies' }}</span
+      >
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

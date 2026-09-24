@@ -19,4 +19,52 @@
     </button>
   </form>
 </div>
+
+<div class="card" style="border-color: var(--error-soft)">
+  <div class="card-header">
+    <div
+      class="card-icon"
+      style="background: var(--error-soft); color: var(--error)"
+    >
+      {{ icon('trash', 18) }}
+    </div>
+    <div class="card-header-text">
+      <h3>Delete account</h3>
+      <p>
+        Permanently deletes your account and everything in it — every document,
+        WhatsApp import, chat note, person, and extracted fact. This cannot be
+        undone.
+      </p>
+    </div>
+  </div>
+  {% if delete_error %}
+  <p class="error">{{ icon('x-circle', 14) }} {{ delete_error }}</p>
+  {% endif %}
+  <form
+    method="post"
+    action="/profile/delete-account"
+    onsubmit="
+      return confirm(
+        'This permanently deletes your account and all your data. This cannot be undone. Continue?',
+      );
+    "
+  >
+    <input
+      type="password"
+      name="password"
+      placeholder="Confirm your password"
+      required
+    />
+    <button
+      type="submit"
+      style="
+        background: var(--error);
+        border-color: var(--error);
+        color: var(--accent-contrast, #fff);
+      "
+    >
+      {{ icon('trash', 15) }} Delete my account permanently
+    </button>
+  </form>
+</div>
 {% endblock %}

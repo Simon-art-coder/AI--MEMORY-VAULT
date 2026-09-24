@@ -1,23 +1,18 @@
 """
 Structured extraction: people, events, promises, decisions, tasks.
 
-This is the one phase that is genuinely impossible to do honestly
-without an LLM — regex/keyword heuristics for "did someone make a
-promise" produce too many false positives/negatives to be trustworthy,
-and the spec explicitly forbids fabricating memories. So: if no
-ANTHROPIC_API_KEY is set, extraction is skipped and memory.extracted_facts
-stays None. This is surfaced to the caller (see run_extraction's return
-value) so the API layer can tell the user honestly, instead of silently
-returning empty results that look like "nothing was found."
+Also auto-links extracted people to the memory via the Person table and
+the memory_people association -- this turns "a name mentioned in text"
+into an actual queryable relationship ("show me everything involving
+John"), which the People page reads from.
 """
 
 import json
 
-from sqlalchemy.orm import Session
-
 from app.ai.llm_client import LLMNotConfiguredError, LLMRequestError, generate
 from app.models.memory import Memory
 from app.repositories.memory_repository import update_memory_facts
+from app.repositories.person_repository import get_or_create_person, link_person_to_memory
 
 EXTRACTION_SYSTEM_PROMPT = """You extract structured facts from a personal memory chunk of text.
 
@@ -36,32 +31,34 @@ Do not infer or guess. If a category has nothing, return an empty list."""
 
 
 class ExtractionSkippedNotConfigured(Exception):
-    """Raised (not swallowed) when extraction can't run because no LLM key is set."""
-
     pass
 
 
 def extract_facts_from_text(content: str) -> dict:
     try:
-        raw_response = generate(EXTRACTION_SYSTEM_PROMPT, content, max_tokens=800)
+        raw_response = generate(EXTRACTION_SYSTEM_PROMPT, content, max_tokens=1500)
     except LLMNotConfiguredError as exc:
         raise ExtractionSkippedNotConfigured(str(exc)) from exc
 
     try:
         return json.loads(raw_response)
     except json.JSONDecodeError as exc:
-        # The LLM didn't follow the JSON-only instruction. We surface this
-        # as a request error rather than guessing at a partial parse —
-        # a corrupted extraction is worse than a missing one.
         raise LLMRequestError(f"Extraction response was not valid JSON: {raw_response[:200]}") from exc
 
 
-def run_extraction_for_memory(db: Session, memory: Memory) -> Memory:
-    """
-    Extracts facts for one memory chunk and persists them.
-    Raises ExtractionSkippedNotConfigured if no LLM key is set — callers
-    decide how to surface that (e.g. a 200 response noting extraction
-    was skipped, not a fabricated empty result).
-    """
+def run_extraction_for_memory(db, memory: Memory) -> Memory:
     facts = extract_facts_from_text(memory.content)
-    return update_memory_facts(db, memory, facts)
+    memory = update_memory_facts(db, memory, facts)
+
+    # Auto-link every extracted person to this memory, creating the
+    # Person row if it's the first time this name has come up for this
+    # user. This is what makes "who have I talked to about X" and the
+    # People page possible -- without it, names sat in extracted_facts
+    # as plain text with no queryable relationship at all.
+    for name in facts.get("people", []):
+        if not name or not name.strip():
+            continue
+        person = get_or_create_person(db, user_id=memory.user_id, name=name)
+        link_person_to_memory(db, person, memory)
+
+    return memory
